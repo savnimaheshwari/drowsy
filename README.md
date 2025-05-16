@@ -29,9 +29,4 @@ Long study sessions and late-night work often cause fatigue, reducing concentrat
 - **Flask** – Lightweight web server backend  
 - **JavaScript / HTML / CSS** – Frontend interface  
 
----
-
-## Demo
-
-![Uploading Screenshot 2025-05-16 at 17-49-37 Drowsy.png…]()
 
