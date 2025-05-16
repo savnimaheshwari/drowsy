@@ -30,7 +30,11 @@ Long study sessions and late-night work often cause fatigue, reducing concentrat
 - **JavaScript / HTML / CSS** – Frontend interface
 
 ___
+
+## Demo
+
 ![Demo Screenshot](demo.png)
+
 
 
 
