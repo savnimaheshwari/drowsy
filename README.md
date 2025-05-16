@@ -27,6 +27,10 @@ Long study sessions and late-night work often cause fatigue, reducing concentrat
 - **OpenCV** – Real-time computer vision and video processing  
 - **MediaPipe** – Robust facial landmark detection  
 - **Flask** – Lightweight web server backend  
-- **JavaScript / HTML / CSS** – Frontend interface  
+- **JavaScript / HTML / CSS** – Frontend interface
+
+___
+![Demo Screenshot](demo.png)
+
 
 
