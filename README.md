@@ -15,8 +15,8 @@ Long study sessions and late-night work often cause fatigue, reducing concentrat
 ## Key Features
 
 - Real-time eye aspect ratio (EAR) based drowsiness detection  
-- Live webcam streaming via Flask  
-- Instant audio alert on prolonged eye closure (10+ seconds)  
+- Live webcam streaming via Flask 
+- Instant audio and text alert on prolonged eye closure (10+ seconds)  
 - Clean, intuitive frontend for easy monitoring  
 
 ---
