@@ -1,4 +1,4 @@
-# Drowsy — Real-Time Drowsiness Detector
+# Drowsy
 
 Drowsy is a lightweight, real-time drowsiness detection system built with MediaPipe and OpenCV, served through a Flask backend and a clean, minimal frontend.
 
