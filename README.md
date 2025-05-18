@@ -29,6 +29,14 @@ Long study sessions and late-night work often cause fatigue, reducing concentrat
 - **Flask** – Lightweight web server backend  
 - **JavaScript / HTML / CSS** – Frontend interface
 
+# Run Instructions
+
+```bash
+python3 -m venv venv
+source venv/bin/activate      # On Windows: venv\Scripts\activate
+pip install flask opencv-python mediapipe pygame
+python app.py
+deactivate
 
 
 
