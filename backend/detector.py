@@ -49,7 +49,7 @@ def detect_drowsiness():
                 alert_played = False
 
             # if eyes closed for more than 10 seconds, show alert and play sound
-            if sleep_counter > 300: # 10 seconds assuming 30 fps
+            if sleep_counter > 300: # 10 seconds (30 fps assumption)
                 cv2.putText(image, "DROWSY!", (30, 100),
                             cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
                 if not alert_played:
