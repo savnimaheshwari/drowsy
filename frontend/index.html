@@ -1,28 +1,811 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Drowsy</title>
-    <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SENTINEL — Drowsiness Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne+Mono&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0b0d;
+    --surface:   #111318;
+    --border:    #1e2128;
+    --border-hi: #2e333d;
+    --text:      #c8cdd8;
+    --muted:     #4a5060;
+    --mono:      'Syne Mono', monospace;
+    --sans:      'DM Sans', sans-serif;
+
+    --ok:        #00c87a;
+    --warn:      #f0a500;
+    --alert:     #e85d20;
+    --critical:  #e02020;
+
+    --level-color: var(--ok);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 1fr;
+    overflow-x: hidden;
+  }
+
+  /* ── scanline texture overlay ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.07) 2px,
+      rgba(0,0,0,0.07) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  /* ─── HEADER ─────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 36px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .wordmark {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.22em;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .eye-icon {
+    width: 28px; height: 18px;
+    position: relative;
+  }
+  .eye-icon svg { width: 100%; height: 100%; }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .live-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--ok);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .live-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--ok);
+    animation: blink-dot 1.4s ease-in-out infinite;
+  }
+  @keyframes blink-dot {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+
+  .uptime {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+  }
+
+  /* ─── MAIN LAYOUT ────────────────────────────────────── */
+  main {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 0;
+    height: calc(100vh - 57px - 44px);
+  }
+
+  /* ─── VIDEO PANEL ────────────────────────────────────── */
+  .video-panel {
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+  }
+
+  #videoFeed {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+  }
+  #videoFeed.loaded { opacity: 1; }
+
+  /* Corner brackets */
+  .bracket {
+    position: absolute;
+    width: 24px; height: 24px;
+    border-color: var(--level-color);
+    border-style: solid;
+    opacity: 0.7;
+    transition: border-color 0.5s;
+    z-index: 2;
+  }
+  .bracket.tl { top: 16px; left: 16px; border-width: 2px 0 0 2px; }
+  .bracket.tr { top: 16px; right: 16px; border-width: 2px 2px 0 0; }
+  .bracket.bl { bottom: 16px; left: 16px; border-width: 0 0 2px 2px; }
+  .bracket.br { bottom: 16px; right: 16px; border-width: 0 2px 2px 0; }
+
+  /* Alert flash vignette */
+  .vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    transition: box-shadow 0.3s ease;
+    box-shadow: inset 0 0 0px transparent;
+  }
+  .vignette.warn     { box-shadow: inset 0 0 60px rgba(240,165,0,0.22); }
+  .vignette.alert    { box-shadow: inset 0 0 80px rgba(232,93,32,0.35); animation: flash 0.7s ease-in-out infinite alternate; }
+  .vignette.critical { box-shadow: inset 0 0 100px rgba(224,32,32,0.5); animation: flash 0.35s ease-in-out infinite alternate; }
+
+  @keyframes flash {
+    from { opacity: 0.6; }
+    to   { opacity: 1.0; }
+  }
+
+  /* Calibrating overlay */
+  .calibration-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(10,11,13,0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    z-index: 10;
+    transition: opacity 0.5s;
+  }
+  .calibration-overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .cal-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+  }
+  .cal-bar-track {
+    width: 240px; height: 2px;
+    background: var(--border-hi);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .cal-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--ok);
+    transition: width 0.1s linear;
+  }
+  .cal-instruction {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 400;
+  }
+
+  /* ─── SIDE PANEL ─────────────────────────────────────── */
+  .side-panel {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    overflow-y: auto;
+  }
+
+  /* ─── ALERT BANNER ───────────────────────────────────── */
+  .alert-banner {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: background 0.4s;
+  }
+  .alert-banner .label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    color: var(--muted);
+  }
+  .alert-banner .status {
+    font-family: var(--mono);
+    font-size: 20px;
+    letter-spacing: 0.1em;
+    color: var(--level-color);
+    transition: color 0.4s;
+  }
+  .alert-banner .sub {
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 400;
+  }
+
+  /* ─── SCORE GAUGE ────────────────────────────────────── */
+  .gauge-section {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .gauge-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  .gauge-arc {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+
+  .gauge-num {
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 36px;
+    color: var(--level-color);
+    transition: color 0.5s;
+    line-height: 1;
+  }
+  .gauge-num span {
+    font-size: 14px;
+    color: var(--muted);
+    vertical-align: super;
+  }
+
+  /* ─── METRIC ROWS ────────────────────────────────────── */
+  .metrics-section {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .metric-row {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .metric-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  .metric-name {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .metric-val {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text);
+    transition: color 0.3s;
+  }
+
+  .metric-bar {
+    height: 2px;
+    background: var(--border-hi);
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .metric-fill {
+    position: absolute;
+    top: 0; left: 0;
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.4s ease, background 0.4s;
+  }
+
+  /* ─── SIGNAL LOG ─────────────────────────────────────── */
+  .log-section {
+    flex: 1;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .log-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    color: var(--muted);
+  }
+
+  .log-entries {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 4px;
+    overflow: hidden;
+    flex: 1;
+  }
+
+  .log-entry {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    animation: fadeIn 0.3s forwards;
+  }
+  .log-entry.warn     { color: var(--warn); }
+  .log-entry.alert    { color: var(--alert); }
+  .log-entry.critical { color: var(--critical); }
+
+  @keyframes fadeIn { to { opacity: 1; } }
+
+  /* ─── MINI SPARKLINE ─────────────────────────────────── */
+  .sparkline-section {
+    padding: 16px 24px 20px;
+    border-top: 1px solid var(--border);
+  }
+  .sparkline-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  #sparkCanvas {
+    width: 100%;
+    height: 40px;
+    display: block;
+  }
+
+  /* ─── FOOTER ─────────────────────────────────────────── */
+  footer {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    height: 44px;
+  }
+
+  .footer-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-right: 1px solid var(--border);
+    padding: 0 12px;
+  }
+  .footer-cell:last-child { border-right: none; }
+
+  .fc-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+  }
+  .fc-val {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+  }
+
+  /* ─── RESPONSIVE ─────────────────────────────────────── */
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 56vw 1fr; }
+    .video-panel { border-right: none; border-bottom: 1px solid var(--border); }
+    footer { grid-template-columns: repeat(2, 1fr); height: auto; }
+    .footer-cell { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  }
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">
-                <div class="logo-icon"></div>
-                <div>Drowsy Detection</div> 
-            </div>
-        </div>
-        
-        <div class="video-container">
-            <img id="videoFeed" src="http://localhost:5050/video_feed" alt="Live Feed" />
-        </div>
-        
-        <div class="status-bar">
-            <div id="statusText">You are being watched</div>
-        </div>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="wordmark">
+    <div class="eye-icon">
+      <svg viewBox="0 0 28 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M1 9C1 9 6 2 14 2C22 2 27 9 27 9C27 9 22 16 14 16C6 16 1 9 1 9Z"
+              stroke="#c8cdd8" stroke-width="1.2" fill="none"/>
+        <circle cx="14" cy="9" r="3.5" stroke="#c8cdd8" stroke-width="1.2" fill="none"/>
+        <circle cx="14" cy="9" r="1.2" fill="#c8cdd8"/>
+      </svg>
     </div>
-    <script src="script.js"></script>
+    SENTINEL
+  </div>
+  <div class="header-right">
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      LIVE
+    </div>
+    <div class="uptime" id="uptime">00:00:00</div>
+  </div>
+</header>
+
+<!-- ── MAIN ── -->
+<main>
+  <!-- Video -->
+  <div class="video-panel">
+    <div class="bracket tl"></div>
+    <div class="bracket tr"></div>
+    <div class="bracket bl"></div>
+    <div class="bracket br"></div>
+    <div class="vignette" id="vignette"></div>
+
+    <!-- Calibrating overlay -->
+    <div class="calibration-overlay" id="calOverlay">
+      <div class="cal-label">CALIBRATING</div>
+      <div class="cal-bar-track"><div class="cal-bar-fill" id="calBar"></div></div>
+      <div class="cal-instruction">Keep eyes open and look at the camera</div>
+    </div>
+
+    <img id="videoFeed" src="/video" alt="live feed"
+         onload="this.classList.add('loaded')">
+  </div>
+
+  <!-- Side panel -->
+  <div class="side-panel">
+
+    <!-- Alert banner -->
+    <div class="alert-banner">
+      <div class="label">DRIVER STATE</div>
+      <div class="status" id="statusText">MONITORING</div>
+      <div class="sub" id="statusSub">All signals nominal</div>
+    </div>
+
+    <!-- Score gauge -->
+    <div class="gauge-section">
+      <div class="gauge-label">DROWSINESS SCORE</div>
+      <div class="gauge-arc">
+        <svg width="160" height="88" viewBox="0 0 160 88">
+          <path d="M16 80 A64 64 0 0 1 144 80" fill="none" stroke="#1e2128" stroke-width="6" stroke-linecap="round"/>
+          <path id="arcFill" d="M16 80 A64 64 0 0 1 144 80" fill="none"
+                stroke="#00c87a" stroke-width="6" stroke-linecap="round"
+                stroke-dasharray="201" stroke-dashoffset="201"
+                style="transition: stroke-dashoffset 0.5s ease, stroke 0.5s"/>
+        </svg>
+      </div>
+      <div class="gauge-num" id="scoreNum">0.00<span>/ 1.0</span></div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="metrics-section">
+
+      <div class="metric-row">
+        <div class="metric-header">
+          <span class="metric-name">EAR (eye aspect ratio)</span>
+          <span class="metric-val" id="earVal">—</span>
+        </div>
+        <div class="metric-bar"><div class="metric-fill" id="earFill" style="width:0%;background:var(--ok)"></div></div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-header">
+          <span class="metric-name">PERCLOS (3 s window)</span>
+          <span class="metric-val" id="perclosVal">—</span>
+        </div>
+        <div class="metric-bar"><div class="metric-fill" id="perclosFill" style="width:0%;background:var(--ok)"></div></div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-header">
+          <span class="metric-name">HEAD PITCH</span>
+          <span class="metric-val" id="pitchVal">—</span>
+        </div>
+        <div class="metric-bar"><div class="metric-fill" id="pitchFill" style="width:0%;background:var(--ok)"></div></div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-header">
+          <span class="metric-name">BLINK RATE</span>
+          <span class="metric-val" id="bpmVal">—</span>
+        </div>
+        <div class="metric-bar"><div class="metric-fill" id="bpmFill" style="width:0%;background:var(--ok)"></div></div>
+      </div>
+
+    </div>
+
+    <!-- Log -->
+    <div class="log-section">
+      <div class="log-label">EVENT LOG</div>
+      <div class="log-entries" id="logEntries"></div>
+    </div>
+
+    <!-- Sparkline -->
+    <div class="sparkline-section">
+      <div class="sparkline-label">SCORE HISTORY (60 s)</div>
+      <canvas id="sparkCanvas"></canvas>
+    </div>
+
+  </div>
+</main>
+
+<!-- ── FOOTER ── -->
+<footer>
+  <div class="footer-cell">
+    <span class="fc-label">SOURCE</span>
+    <span class="fc-val">CAM 0</span>
+  </div>
+  <div class="footer-cell">
+    <span class="fc-label">STREAM</span>
+    <span class="fc-val" id="fpsVal">—</span>
+  </div>
+  <div class="footer-cell">
+    <span class="fc-label">FACE</span>
+    <span class="fc-val" id="faceVal">—</span>
+  </div>
+  <div class="footer-cell">
+    <span class="fc-label">BUILD</span>
+    <span class="fc-val">v2.0</span>
+  </div>
+</footer>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const LEVEL_COLORS = {
+  ok:       getComputedStyle(document.documentElement).getPropertyValue('--ok').trim()       || '#00c87a',
+  warning:  getComputedStyle(document.documentElement).getPropertyValue('--warn').trim()     || '#f0a500',
+  alert:    getComputedStyle(document.documentElement).getPropertyValue('--alert').trim()    || '#e85d20',
+  critical: getComputedStyle(document.documentElement).getPropertyValue('--critical').trim() || '#e02020',
+};
+
+const STATUS_LABELS = {
+  ok:       ['MONITORING',  'All signals nominal'],
+  warning:  ['WARNING',     'Elevated drowsiness detected'],
+  alert:    ['ALERT',       'Take a break soon'],
+  critical: ['CRITICAL',    'STOP — severe drowsiness'],
+};
+
+const ARC_LEN = 201;   // arc path total dash length (matches SVG path)
+
+// ── State ──────────────────────────────────────────────────────────────────
+let prevLevel    = 'ok';
+let scoreHistory = [];   // last 300 samples (~60 s at 200 ms)
+let pollCount    = 0;
+let startTime    = Date.now();
+let calAnimId    = null;
+let calStartTime = Date.now();
+const CAL_MS     = 3000;   // match Config.calibration_seconds
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const root       = document.documentElement;
+const vignette   = document.getElementById('vignette');
+const statusText = document.getElementById('statusText');
+const statusSub  = document.getElementById('statusSub');
+const scoreNum   = document.getElementById('scoreNum');
+const arcFill    = document.getElementById('arcFill');
+const earVal     = document.getElementById('earVal');
+const perclosVal = document.getElementById('perclosVal');
+const pitchVal   = document.getElementById('pitchVal');
+const bpmVal     = document.getElementById('bpmVal');
+const earFill    = document.getElementById('earFill');
+const perclosFill= document.getElementById('perclosFill');
+const pitchFill  = document.getElementById('pitchFill');
+const bpmFill    = document.getElementById('bpmFill');
+const logEntries = document.getElementById('logEntries');
+const fpsVal     = document.getElementById('fpsVal');
+const faceVal    = document.getElementById('faceVal');
+const uptime     = document.getElementById('uptime');
+const calOverlay = document.getElementById('calOverlay');
+const calBar     = document.getElementById('calBar');
+const spark      = document.getElementById('sparkCanvas');
+const sparkCtx   = spark.getContext('2d');
+
+// ── Calibration bar animation ──────────────────────────────────────────────
+function animateCal() {
+  const elapsed = Date.now() - calStartTime;
+  const pct = Math.min(elapsed / CAL_MS * 100, 100);
+  calBar.style.width = pct + '%';
+  if (pct < 100) calAnimId = requestAnimationFrame(animateCal);
+}
+animateCal();
+
+// ── Uptime ─────────────────────────────────────────────────────────────────
+setInterval(() => {
+  const s = Math.floor((Date.now() - startTime) / 1000);
+  const h = String(Math.floor(s / 3600)).padStart(2, '0');
+  const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss= String(s % 60).padStart(2, '0');
+  uptime.textContent = `${h}:${m}:${ss}`;
+}, 1000);
+
+// ── Log helper ─────────────────────────────────────────────────────────────
+let logCount = 0;
+function pushLog(msg, level) {
+  if (logCount++ > 60) {
+    const old = logEntries.lastChild;
+    if (old) logEntries.removeChild(old);
+  }
+  const t = new Date().toLocaleTimeString('en-US', { hour12: false });
+  const el = document.createElement('div');
+  el.className = `log-entry ${level !== 'ok' ? level : ''}`;
+  el.textContent = `${t}  ${msg}`;
+  logEntries.prepend(el);
+}
+
+// ── Sparkline ──────────────────────────────────────────────────────────────
+function drawSparkline() {
+  const dpr  = window.devicePixelRatio || 1;
+  const w    = spark.offsetWidth;
+  const h    = spark.offsetHeight;
+  spark.width  = w * dpr;
+  spark.height = h * dpr;
+  sparkCtx.scale(dpr, dpr);
+
+  sparkCtx.clearRect(0, 0, w, h);
+  const data = scoreHistory.slice(-300);
+  if (data.length < 2) return;
+
+  const step = w / (data.length - 1);
+
+  // Danger zone fill
+  sparkCtx.fillStyle = 'rgba(224,32,32,0.06)';
+  sparkCtx.fillRect(0, 0, w, h * 0.15);
+
+  // Line
+  sparkCtx.beginPath();
+  data.forEach((v, i) => {
+    const x = i * step;
+    const y = h - v * h * 0.9 - h * 0.05;
+    i === 0 ? sparkCtx.moveTo(x, y) : sparkCtx.lineTo(x, y);
+  });
+  sparkCtx.strokeStyle = LEVEL_COLORS[prevLevel] || LEVEL_COLORS.ok;
+  sparkCtx.lineWidth   = 1.5;
+  sparkCtx.lineJoin    = 'round';
+  sparkCtx.stroke();
+
+  // Fill under line
+  sparkCtx.lineTo(data.length * step, h);
+  sparkCtx.lineTo(0, h);
+  sparkCtx.closePath();
+  sparkCtx.fillStyle = LEVEL_COLORS[prevLevel] + '18';
+  sparkCtx.fill();
+}
+
+// ── Metric bar helper ──────────────────────────────────────────────────────
+function setBar(fill, pct, level) {
+  fill.style.width = Math.min(pct, 100) + '%';
+  fill.style.background = LEVEL_COLORS[level] || LEVEL_COLORS.ok;
+}
+
+// ── Main poll loop ─────────────────────────────────────────────────────────
+let lastPollTime = Date.now();
+
+async function poll() {
+  try {
+    const res = await fetch('/metrics');
+    const d   = await res.json();
+
+    pollCount++;
+    const now     = Date.now();
+    const elapsed = now - lastPollTime;
+    lastPollTime  = now;
+    const fps     = Math.round(1000 / elapsed * 5) / 5;   // approx
+
+    // ── Calibration ──
+    if (!d.calibrated) {
+      calOverlay.classList.remove('hidden');
+    } else {
+      calOverlay.classList.add('hidden');
+    }
+
+    if (!d.face_found) {
+      faceVal.textContent = 'NOT FOUND';
+      faceVal.style.color = LEVEL_COLORS.warning;
+      setTimeout(poll, 200);
+      return;
+    }
+
+    faceVal.textContent  = 'DETECTED';
+    faceVal.style.color  = LEVEL_COLORS.ok;
+    fpsVal.textContent   = fps.toFixed(1) + ' Hz';
+
+    const level = d.level;
+    const color = LEVEL_COLORS[level] || LEVEL_COLORS.ok;
+
+    // ── CSS level color variable ──
+    root.style.setProperty('--level-color', color);
+
+    // ── Score arc ──
+    const offset = ARC_LEN * (1 - d.score);
+    arcFill.style.strokeDashoffset = offset;
+    arcFill.style.stroke           = color;
+    scoreNum.textContent = d.score.toFixed(2);
+    scoreNum.innerHTML   = d.score.toFixed(2) + '<span>/ 1.0</span>';
+    scoreNum.style.color = color;
+
+    // ── Status banner ──
+    const [label, sub] = STATUS_LABELS[level] || STATUS_LABELS.ok;
+    statusText.textContent = label;
+    statusText.style.color = color;
+    statusSub.textContent  = sub;
+
+    // ── Vignette ──
+    vignette.className = level !== 'ok' ? `vignette ${level}` : 'vignette';
+
+    // ── EAR bar (0.15–0.40 range typical) ──
+    earVal.textContent = d.ear.toFixed(3);
+    setBar(earFill, (d.ear / 0.40) * 100, d.ear < 0.22 ? 'critical' : d.ear < 0.27 ? 'warning' : 'ok');
+
+    // ── PERCLOS bar ──
+    perclosVal.textContent = (d.perclos * 100).toFixed(0) + '%';
+    setBar(perclosFill, d.perclos * 100, d.perclos > 0.6 ? 'critical' : d.perclos > 0.3 ? 'warning' : 'ok');
+
+    // ── Head pitch bar ──
+    const absPitch = Math.abs(d.pitch);
+    pitchVal.textContent = (d.pitch > 0 ? '+' : '') + d.pitch.toFixed(1) + '°';
+    setBar(pitchFill, (absPitch / 40) * 100, absPitch > 30 ? 'critical' : absPitch > 18 ? 'warning' : 'ok');
+
+    // ── Blink BPM bar ──
+    bpmVal.textContent = d.blink_bpm.toFixed(1) + ' bpm';
+    const bpmBad = d.blink_bpm < 6 || d.blink_bpm > 35;
+    const bpmMid = d.blink_bpm < 10 || d.blink_bpm > 25;
+    setBar(bpmFill, Math.min((d.blink_bpm / 40) * 100, 100),
+           bpmBad ? 'critical' : bpmMid ? 'warning' : 'ok');
+
+    // ── Log on level change ──
+    if (level !== prevLevel) {
+      if (level !== 'ok')
+        pushLog(`Level → ${level.toUpperCase()}  (score ${d.score.toFixed(2)})`, level);
+      else
+        pushLog(`Returned to normal`, 'ok');
+    }
+
+    // ── Sparkline ──
+    scoreHistory.push(d.score);
+    if (scoreHistory.length > 600) scoreHistory.shift();
+    drawSparkline();
+
+    prevLevel = level;
+  } catch(e) {
+    faceVal.textContent = 'NO SIGNAL';
+    faceVal.style.color = LEVEL_COLORS.alert;
+  }
+
+  setTimeout(poll, 200);
+}
+
+poll();
+
+// Resize sparkline on window resize
+window.addEventListener('resize', drawSparkline);
+</script>
 </body>
 </html>
